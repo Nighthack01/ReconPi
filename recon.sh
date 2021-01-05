@@ -11,15 +11,7 @@ GREEN="\033[0;32m"
 RESET="\033[0m"
 domain="$1"
 RESULTDIR="$HOME/assets/$domain"
-WORDLIST="$RESULTDIR/wordlists"
-SCREENSHOTS="$RESULTDIR/screenshots"
 SUBS="$RESULTDIR/subdomains"
-DIRSCAN="$RESULTDIR/directories"
-HTML="$RESULTDIR/html"
-GFSCAN="$RESULTDIR/gfscan"
-IPS="$RESULTDIR/ips"
-PORTSCAN="$RESULTDIR/portscan"
-ARCHIVE="$RESULTDIR/archive"
 VERSION="2.2"
 NUCLEISCAN="$RESULTDIR/nucleiscan"
 
@@ -48,7 +40,7 @@ __________                          __________.__
 checkDirectories() {
 		echo -e "[$GREEN+$RESET] Creating directories and grabbing wordlists for $GREEN$domain$RESET.."
 		mkdir -p "$RESULTDIR"
-		mkdir -p "$SUBS" "$SCREENSHOTS" "$DIRSCAN" "$HTML" "$WORDLIST" "$IPS" "$PORTSCAN" "$ARCHIVE" "$NUCLEISCAN" "$GFSCAN"
+		mkdir -p "$SUBS"  "$NUCLEISCAN" 
 }
 
 startFunction() {
@@ -56,11 +48,6 @@ startFunction() {
 	echo -e "[$GREEN+$RESET] Starting $tool"
 }
 
-: 'Gather resolvers'
-gatherResolvers() {
-	startFunction "Get fresh working resolvers"
-	wget https://raw.githubusercontent.com/janmasarik/resolvers/master/resolvers.txt -O "$IPS"/resolvers.txt
-}
 
 : 'subdomain gathering'
 gatherSubdomains() {
@@ -143,84 +130,8 @@ checkTakeovers() {
 	fi
 }
 
-: 'Get all CNAME'
-getCNAME() {
-	startFunction "dnsprobe to get CNAMEs"
-	cat "$SUBS"/subdomains | dnsprobe -r CNAME -o "$SUBS"/subdomains_cname.txt
-}
 
-: 'Gather IPs with dnsprobe'
-gatherIPs() {
-	startFunction "dnsprobe"
-	cat "$SUBS"/subdomains | dnsprobe -silent -f ip | sort -u | tee "$IPS"/"$domain"-ips.txt
-	python3 $HOME/ReconPi/scripts/clean_ips.py "$IPS"/"$domain"-ips.txt "$IPS"/"$domain"-origin-ips.txt
-	echo -e "[$GREEN+$RESET] Done."
-}
 
-: 'Portscan on found IP addresses'
-portScan() {
-	startFunction  "Port Scan"
-	cat "$SUBS"/alive_subdomains | naabu -p - -silent -no-probe -exclude-cdn -nmap -config "$HOME"/ReconPi/configs/naabu.conf
-    mv reconpi-nmap* "$PORTSCAN"
-	echo -e "[$GREEN+$RESET] Port Scan finished"
-}
-
-: 'Use eyewitness to gather screenshots'
-gatherScreenshots() {
-	startFunction "Screenshot Gathering"
-# Bug in aquatone, once it gets fixed, will enable aquatone on x86 also.
-	arch=`uname -m`
-	if [[ "$arch" == "x86_64" ]]; then
-        python3 $HOME/tools/EyeWitness/Python/EyeWitness.py -f "$SUBS"/hosts --no-prompt -d "$SCREENSHOTS"
-    else
-        "$HOME"/go/bin/aquatone -http-timeout 10000 -out "$SCREENSHOTS" <"$SUBS"/hosts
-    fi
-	echo -e "[$GREEN+$RESET] Screenshot Gathering finished"
-}
-
-fetchArchive() {
-	startFunction "fetchArchive"
-	cat "$SUBS"/hosts | sed 's/https\?:\/\///' | gau > "$ARCHIVE"/getallurls.txt
-	cat "$ARCHIVE"/getallurls.txt  | sort -u | unfurl --unique keys > "$ARCHIVE"/paramlist.txt
-	cat "$ARCHIVE"/getallurls.txt  | sort -u | grep -P "\w+\.js(\?|$)" | httpx -silent -status-code -mc 200 | awk '{print $1}' | sort -u > "$ARCHIVE"/jsurls.txt
-	cat "$ARCHIVE"/getallurls.txt  | sort -u | grep -P "\w+\.php(\?|$) | httpx -silent -status-code -mc 200 | awk '{print $1}' | sort -u " > "$ARCHIVE"/phpurls.txt
-	cat "$ARCHIVE"/getallurls.txt  | sort -u | grep -P "\w+\.aspx(\?|$) | httpx -silent -status-code -mc 200 | awk '{print $1}' | sort -u " > "$ARCHIVE"/aspxurls.txt
-	cat "$ARCHIVE"/getallurls.txt  | sort -u | grep -P "\w+\.jsp(\?|$) | httpx -silent -status-code -mc 200 | awk '{print $1}' | sort -u " > "$ARCHIVE"/jspurls.txt
-	echo -e "[$GREEN+$RESET] fetchArchive finished"
-}
-
-fetchEndpoints() {
-	startFunction "fetchEndpoints"
-	for js in `cat "$ARCHIVE"/jsurls.txt`;
-	do
-		python3 "$HOME"/tools/LinkFinder/linkfinder.py -i $js -o cli | anew "$ARCHIVE"/endpoints.txt;
-	done
-	echo -e "[$GREEN+$RESET] fetchEndpoints finished"
-}
-: 'Gather information with meg'
-startMeg() {
-	startFunction "meg"
-	cd "$SUBS" || return
-	meg -d 1000 -v /
-	mv out meg
-	cd "$HOME" || return
-}
-
-: 'Use gf to find secrets in responses'
-startGfScan() {
-	startFunction "Checking for secrets using gf"
-	cd "$SUBS"/meg || return
-	for i in `gf -list`; do [[ ${i} =~ "_secrets"* ]] && gf ${i} >> "$GFSCAN"/"${i}".txt; done
-	cd "$HOME" || return
-}
-
-: 'directory brute-force'
-startBruteForce() {
-	startFunction "directory brute-force"
-	# maybe run with interlace? Might remove
-	cat "$SUBS"/hosts | parallel -j 5 --bar --shuf gobuster dir -u {} -t 50 -w wordlist.txt -l -e -r -k -q -o "$DIRSCAN"/"$sub".txt
-	"$HOME"/go/bin/gobuster dir -u "$line" -w "$WORDLIST"/wordlist.txt -e -q -k -n -o "$DIRSCAN"/out.txt
-}
 : 'Check for Vulnerabilities'
 runNuclei() {
 	startFunction  "Nuclei Basic-detections"
@@ -246,51 +157,7 @@ runNuclei() {
 	echo -e "[$GREEN+$RESET] Nuclei Scan finished"
 }
 
-: 'Setup screenshot results on the target IP address'
-makePage() {
-	startFunction "HTML webpage"
-	cd /var/www/html/ || return
-	sudo chmod -R 755 .
-	sudo cp -r "$SCREENSHOTS" /var/www/html/$domain
-	sudo chmod a+r -R /var/www/html/$domain/*
-	cd "$HOME" || return
-	echo -e "[$GREEN+$RESET] Scan finished, start doing some manual work ;)"
-	echo -e "[$GREEN+$RESET] The screenshot results page, nuclei results directory and the meg results directory are great points!"
-	echo -e "[$GREEN+$RESET] screenshot results page: http://$(ip -4 addr show eth0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n 1)/$domain/screenshots/report.html"
-}
 
-notifySlack() {
-	startFunction "Trigger Slack Notification"
-	source "$HOME"/ReconPi/configs/tokens.txt
-	export SLACK_WEBHOOK_URL="$SLACK_WEBHOOK_URL"
-	echo -e "ReconPi $domain scan completed!" | slackcat
-	totalsum=$(cat $SUBS/hosts | wc -l)
-	echo -e "$totalsum live subdomain hosts discovered" | slackcat
-
-	posibbletko="$(cat $SUBS/takeovers | wc -l)"
-	if [ -s "$SUBS/takeovers" ]
-		then
-        echo -e "Found $posibbletko possible subdomain takeovers." | slackcat
-	else
-        echo "No subdomain takeovers found." | slackcat
-	fi
-
-	if [ -f "$NUCLEISCAN/cve.txt" ]; then
-	echo "CVE's discovered:" | slackcat
-    cat "$NUCLEISCAN/cve.txt" | slackcat
-		else 
-    echo -e "No CVE's discovered." | slackcat
-	fi
-
-	if [ -f "$NUCLEISCAN/files.txt" ]; then
-	echo "files discovered:" | slackcat
-    cat "$NUCLEISCAN/files.txt" | slackcat
-		else 
-    echo -e "No files discovered." | slackcat
-	fi
-
-	echo -e "[$GREEN+$RESET] Done."
-}
 
 notifyDiscord() {
 	startFunction "Trigger Discord Notification"
@@ -333,22 +200,9 @@ source "$HOME"/ReconPi/configs/tokens.txt || return
 export SLACK_WEBHOOK_URL="$SLACK_WEBHOOK_URL"
 
 displayLogo
-checkArguments
-checkDirectories
-gatherResolvers
 gatherSubdomains
 checkTakeovers
-getCNAME
-gatherIPs
-gatherScreenshots
-startMeg
-#fetchArchive
-#fetchEndpoints
-startGfScan
 runNuclei
-portScan
-#makePage
-notifySlack
 notifyDiscord
 
 # Uncomment the functions
